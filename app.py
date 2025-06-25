@@ -5,6 +5,10 @@ import tempfile
 import threading
 import time
 import os
+import boto3
+from datetime import datetime
+import uuid
+from fastapi import FastAPI, Request, JSONResponse
 
 # Variables globales
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -20,6 +24,17 @@ if torch.cuda.is_available():
     gpu_info = f"GPU: {gpu_name} ({gpu_memory:.1f}GB VRAM)"
 else:
     gpu_info = "GPU: No disponible (usando CPU)"
+
+# Configurar AWS usando variables de entorno de Fly.io
+s3_client = boto3.client(
+    's3',
+    aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
+    aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY'),
+    region_name=os.getenv('AWS_REGION', 'us-east-1')
+)
+
+# Configuración del bucket S3
+S3_BUCKET_NAME = os.getenv('S3_BUCKET_NAME')
 
 def load_model_in_background():
     """Carga el modelo Stable Diffusion XL de forma simple"""
@@ -55,8 +70,31 @@ def progress_callback(step, timestep, latents):
     progress_data["total_steps"] = progress_data.get("total_steps", 10)
     progress_data["status"] = "generating"
 
+def upload_to_s3(image_path):
+    """Sube la imagen a S3 y devuelve la URL pública"""
+    # Generar un nombre único para la imagen
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    image_name = f"sdxl_{timestamp}_{uuid.uuid4().hex[:3]}.png"
+    
+    try:
+        # Subir la imagen a S3
+        s3_client.upload_file(
+            image_path,
+            S3_BUCKET_NAME,
+            image_name,
+            ExtraArgs={'ACL': 'public-read', 'ContentType': 'image/png'}
+        )
+        
+        # Generar URL pública
+        url = f"https://{S3_BUCKET_NAME}.s3.amazonaws.com/{image_name}"
+        return url
+    except Exception as e:
+        print(f"Error subiendo a S3: {e}")
+        return None
+
+
 def generate_image_file(prompt, num_steps=10, width=1024, height=1024, guidance_scale=7.0):
-    """Genera una imagen con SDXL de forma simple"""
+    """Genera una imagen con SDXL de forma simple (para la interfaz de Gradio)"""
     global pipe, model_loaded, progress_data
     
     if not model_loaded or pipe is None:
@@ -69,24 +107,19 @@ def generate_image_file(prompt, num_steps=10, width=1024, height=1024, guidance_
         progress_data["step"] = 0
         
         # Generar semilla aleatoria para variedad
-        generator = torch.Generator("cpu").manual_seed(int(time.time()))
+        generator = torch.Generator(device).manual_seed(int(time.time()))
         
-        # Configuración simple
         result = pipe(
-            prompt,
-            height=height,
-            width=width,
-            guidance_scale=guidance_scale,
+            prompt=prompt,
             num_inference_steps=num_steps,
+            width=width,
+            height=height,
+            guidance_scale=guidance_scale,
             generator=generator,
             callback=progress_callback,
             callback_steps=1
         )
         
-        # Verificar que el resultado sea válido
-        if not result.images or len(result.images) == 0:
-            raise Exception("No se generó ninguna imagen")
-            
         image = result.images[0]
         
         # Verificar que la imagen sea válida
@@ -95,15 +128,51 @@ def generate_image_file(prompt, num_steps=10, width=1024, height=1024, guidance_
     
         progress_data["status"] = "completed"
         
+        # Guardar temporalmente la imagen
         temp_file = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
         image.save(temp_file.name, optimize=True)
-        temp_file.close()
-        return temp_file.name, "✅ Imagen generada exitosamente!"
         
+        # Subir a S3 y obtener URL
+        url = upload_to_s3(temp_file.name)
+        if url:
+            return url, "✅ Imagen generada y subida a S3 exitosamente!"
+        else:
+            return None, "❌ Error subiendo la imagen a S3"
+            
     except Exception as e:
         progress_data["status"] = "error"
         print(f"Error: {e}")
         return None, f"❌ Error: {str(e)}"
+
+def generate_image_api(prompt, num_steps=10, width=1024, height=1024, guidance_scale=7.0):
+    """Genera una imagen con SDXL para la API REST"""
+    try:
+        # Llamar a la función principal
+        url, message = generate_image_file(prompt, num_steps, width, height, guidance_scale)
+        
+        if url:
+            return {
+                "success": True,
+                "url": url,
+                "message": message,
+                "metadata": {
+                    "prompt": prompt,
+                    "steps": num_steps,
+                    "width": width,
+                    "height": height,
+                    "guidance_scale": guidance_scale
+                }
+            }
+        else:
+            return {
+                "success": False,
+                "error": message
+            }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
 
 # Crear la interfaz
 with gr.Blocks(title="SDXL Simple - Fly.io") as demo:
@@ -165,13 +234,28 @@ with gr.Blocks(title="SDXL Simple - Fly.io") as demo:
             generate_btn = gr.Button("⚡ Generar Imagen", variant="primary")
         
         with gr.Column():
-            output_file = gr.File(label="Descargar Imagen Generada")
+            output_url = gr.Textbox(label="URL de la Imagen", interactive=False)
+            output_image = gr.Image(label="Imagen Generada", interactive=False)
+            download_btn = gr.Button("Descargar Imagen", variant="secondary")
             message_output = gr.Textbox(label="Estado", interactive=False)
     
+    # Manejar la generación de imagen
     generate_btn.click(
         fn=generate_image_file,
         inputs=[prompt_input, steps_slider, width_slider, height_slider, guidance_slider],
-        outputs=[output_file, message_output]
+        outputs=[output_url, message_output]
+    )
+    
+    # Manejar el botón de descarga
+    def download_image(url):
+        if url:
+            return url
+        return None
+    
+    download_btn.click(
+        fn=download_image,
+        inputs=[output_url],
+        outputs=[output_image]
     )
     
     # Actualizar status al cargar la página
@@ -187,9 +271,32 @@ if __name__ == "__main__":
     
     # Iniciar Gradio inmediatamente
     print("🌐 Iniciando interfaz web...")
+    demo.api_route = "/api/predict"
+    demo.api_app = FastAPI()
+    
+    @demo.api_app.post("/api/predict")
+    async def predict(request: Request):
+        body = await request.json()
+        prompt = body.get("data", [None])[0]
+        if not prompt:
+            return JSONResponse({
+                "success": False,
+                "error": "Prompt is required"
+            }, status_code=400)
+            
+        # Obtener parámetros opcionales
+        num_steps = body.get("data", [None, 10])[1]
+        width = body.get("data", [None, None, 1024])[2]
+        height = body.get("data", [None, None, None, 1024])[3]
+        guidance_scale = body.get("data", [None, None, None, None, 7.0])[4]
+        
+        # Generar la imagen usando la función API
+        result = generate_image_api(prompt, num_steps, width, height, guidance_scale)
+        return JSONResponse(result)
+    
     demo.launch(
         server_name="0.0.0.0", 
         server_port=7860, 
         share=False,
-        show_api=True
+        show_api=False
     ) 
