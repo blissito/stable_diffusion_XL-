@@ -26,22 +26,20 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
-# Crear enlace simbólico para python
-RUN ln -s /usr/bin/python3.11 /usr/bin/python
-
 # Crear directorio de trabajo
 WORKDIR /app
 
-# Instalar dependencias de Python con versiones compatibles y ligeras
-RUN pip3 install --no-cache-dir --upgrade pip && \
-    pip3 install --no-cache-dir torch==2.0.1 torchvision==0.15.2 torchaudio==2.0.2 --index-url https://download.pytorch.org/whl/cu118 && \
-    pip3 install --no-cache-dir diffusers==0.21.4 transformers==4.30.2 accelerate==0.20.3 && \
-    pip3 install --no-cache-dir gradio==3.40.1 huggingface-hub==0.16.4 safetensors==0.3.1 && \
-    pip3 install --no-cache-dir Pillow==9.5.0 numpy==1.24.3 && \
-    pip3 cache purge
+# Instalar dependencias de Python con versiones compatibles
+RUN python3.11 -m pip install --no-cache-dir --upgrade pip && \
+    python3.11 -m pip install --no-cache-dir torch==2.0.1 torchvision==0.15.2 torchaudio==2.0.2 --index-url https://download.pytorch.org/whl/cu118 && \
+    python3.11 -m pip install --no-cache-dir diffusers==0.21.4 transformers==4.30.2 accelerate==0.20.3 && \
+    python3.11 -m pip install --no-cache-dir huggingface_hub==0.16.4 && \
+    python3.11 -m pip install --no-cache-dir gradio==3.50.2 && \
+    python3.11 -m pip install --no-cache-dir Pillow==9.5.0 numpy==1.24.3 && \
+    python3.11 -m pip cache purge
 
-# Debug: mostrar info de gradio
-RUN python3 -m pip show gradio
+# Verificar versiones instaladas
+RUN python3.11 -m pip list | grep -E "(gradio|torch|diffusers|huggingface|transformers|accelerate|Pillow|numpy)"
 
 # Copiar el código de la aplicación
 COPY app.py .
@@ -56,5 +54,5 @@ RUN rm -rf /root/.cache/pip /tmp/* /var/tmp/*
 # Exponer puerto
 EXPOSE 7860
 
-# Comando de inicio optimizado
-CMD ["python3", "app.py"] 
+# Comando de inicio optimizado usando python3.11 explícitamente
+CMD ["python3.11", "app.py"] 

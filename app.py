@@ -22,33 +22,25 @@ else:
     gpu_info = "GPU: No disponible (usando CPU)"
 
 def load_model_in_background():
-    """Carga el modelo Stable Diffusion XL optimizado para Fly.io"""
+    """Carga el modelo Stable Diffusion XL de forma simple"""
     global pipe, model_loaded
     
     try:
-        print(f"Cargando modelo SDXL optimizado en {device.upper()}...")
+        print(f"Cargando modelo SDXL en {device.upper()}...")
         
-        # Configuración más estable para evitar errores de meta tensor
+        # Configuración simple y estable
         pipe = StableDiffusionXLPipeline.from_pretrained(
             "stabilityai/stable-diffusion-xl-base-1.0",
-            torch_dtype=torch.float16 if device == "cuda" else torch.float32,
-            use_safetensors=True,
-            low_cpu_mem_usage=False  # Cambiar a False para evitar meta tensors
+            torch_dtype=torch.float32,
+            use_safetensors=True
         )
         
         if device == "cuda":
-            # Optimizaciones más conservadoras
+            pipe = pipe.to(device)
+            # Solo optimización básica
             pipe.enable_attention_slicing(1)
-            pipe.enable_vae_slicing()
-            
-            # Limpiar cache de CUDA
-            torch.cuda.empty_cache()
         else:
             pipe = pipe.to(device)
-            
-        # Verificar que el modelo se cargó correctamente
-        if pipe is None:
-            raise Exception("El modelo no se pudo cargar")
             
         model_loaded = True
         print(f"✅ Modelo SDXL cargado exitosamente en {device.upper()}!")
@@ -60,11 +52,11 @@ def progress_callback(step, timestep, latents):
     """Callback para actualizar el progreso"""
     global progress_data
     progress_data["step"] = step
-    progress_data["total_steps"] = progress_data.get("total_steps", 15)
+    progress_data["total_steps"] = progress_data.get("total_steps", 10)
     progress_data["status"] = "generating"
 
-def generate_image_file(prompt, num_steps=15, width=1024, height=1024, guidance_scale=7.0):
-    """Genera una imagen con SDXL ultra-optimizado para Fly.io"""
+def generate_image_file(prompt, num_steps=10, width=1024, height=1024, guidance_scale=7.0):
+    """Genera una imagen con SDXL de forma simple"""
     global pipe, model_loaded, progress_data
     
     if not model_loaded or pipe is None:
@@ -79,7 +71,7 @@ def generate_image_file(prompt, num_steps=15, width=1024, height=1024, guidance_
         # Generar semilla aleatoria para variedad
         generator = torch.Generator("cpu").manual_seed(int(time.time()))
         
-        # Configuración simplificada para evitar meta tensors
+        # Configuración simple
         result = pipe(
             prompt,
             height=height,
@@ -103,10 +95,6 @@ def generate_image_file(prompt, num_steps=15, width=1024, height=1024, guidance_
     
         progress_data["status"] = "completed"
         
-        # Limpiar cache después de generar
-        if device == "cuda":
-            torch.cuda.empty_cache()
-        
         temp_file = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
         image.save(temp_file.name, optimize=True)
         temp_file.close()
@@ -115,16 +103,14 @@ def generate_image_file(prompt, num_steps=15, width=1024, height=1024, guidance_
     except Exception as e:
         progress_data["status"] = "error"
         print(f"Error: {e}")
-        if device == "cuda":
-            torch.cuda.empty_cache()
         return None, f"❌ Error: {str(e)}"
 
 # Crear la interfaz
-with gr.Blocks(title="SDXL Ultra-Optimizado - Fly.io") as demo:
-    gr.Markdown("# 🚀 Stable Diffusion XL Ultra-Optimizado")
+with gr.Blocks(title="SDXL Simple - Fly.io") as demo:
+    gr.Markdown("# 🚀 Stable Diffusion XL Simple")
     gr.Markdown(f"**Dispositivo:** {device.upper()}")
     gr.Markdown(f"**{gpu_info}**")
-    gr.Markdown("**Optimizado para:** Velocidad máxima en Fly.io")
+    gr.Markdown("**Configuración:** Simple y estable")
     
     # Status del modelo
     status_text = gr.Markdown("⏳ **Estado del modelo:** Cargando...")
@@ -133,11 +119,11 @@ with gr.Blocks(title="SDXL Ultra-Optimizado - Fly.io") as demo:
         if model_loaded:
             return "✅ **Estado del modelo:** ¡Listo para usar!"
         else:
-            return "⏳ **Estado del modelo:** Descargando SDXL optimizado..."
+            return "⏳ **Estado del modelo:** Descargando SDXL..."
     
     gr.Markdown("---")
-    gr.Markdown("### ⚡ **Configuración Ultra-Rápida**")
-    gr.Markdown("- **15 pasos** (más rápido que 20)")
+    gr.Markdown("### ⚡ **Configuración Simple y Rápida**")
+    gr.Markdown("- **10 pasos** (más rápido)")
     gr.Markdown("- **Guidance 7.0** (balance perfecto)")
     gr.Markdown("- **1024x1024** (tamaño óptimo)")
     
@@ -149,11 +135,11 @@ with gr.Blocks(title="SDXL Ultra-Optimizado - Fly.io") as demo:
                 lines=3
             )
             steps_slider = gr.Slider(
-                minimum=10, 
-                maximum=30, 
-                value=15, 
+                minimum=5, 
+                maximum=20, 
+                value=10, 
                 step=1, 
-                label="Pasos de inferencia (15 = ultra-rápido)"
+                label="Pasos de inferencia (10 = rápido)"
             )
             guidance_slider = gr.Slider(
                 minimum=1.0,
@@ -176,7 +162,7 @@ with gr.Blocks(title="SDXL Ultra-Optimizado - Fly.io") as demo:
                 step=64,
                 label="Alto (1024 recomendado)"
             )
-            generate_btn = gr.Button("⚡ Generar Imagen Ultra-Rápida", variant="primary")
+            generate_btn = gr.Button("⚡ Generar Imagen", variant="primary")
         
         with gr.Column():
             output_file = gr.File(label="Descargar Imagen Generada")
@@ -192,7 +178,7 @@ with gr.Blocks(title="SDXL Ultra-Optimizado - Fly.io") as demo:
     demo.load(update_status, outputs=status_text)
 
 if __name__ == "__main__":
-    print(f"🚀 Iniciando SDXL Ultra-Optimizado en {device.upper()}")
+    print(f"🚀 Iniciando SDXL Simple en {device.upper()}")
     
     # Iniciar carga del modelo en segundo plano
     model_thread = threading.Thread(target=load_model_in_background)
@@ -200,7 +186,7 @@ if __name__ == "__main__":
     model_thread.start()
     
     # Iniciar Gradio inmediatamente
-    print("🌐 Iniciando interfaz web optimizada...")
+    print("🌐 Iniciando interfaz web...")
     demo.launch(
         server_name="0.0.0.0", 
         server_port=7860, 
