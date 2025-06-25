@@ -29,17 +29,19 @@ RUN apt-get update && apt-get install -y \
 # Crear directorio de trabajo
 WORKDIR /app
 
-# Instalar dependencias de Python con versiones compatibles
+# Instalar todas las dependencias en una sola línea
 RUN python3.11 -m pip install --no-cache-dir --upgrade pip && \
     python3.11 -m pip install --no-cache-dir torch==2.0.1 torchvision==0.15.2 torchaudio==2.0.2 --index-url https://download.pytorch.org/whl/cu118 && \
     python3.11 -m pip install --no-cache-dir diffusers==0.21.4 transformers==4.30.2 accelerate==0.20.3 && \
     python3.11 -m pip install --no-cache-dir huggingface_hub==0.16.4 && \
     python3.11 -m pip install --no-cache-dir gradio==3.50.2 && \
     python3.11 -m pip install --no-cache-dir Pillow==9.5.0 numpy==1.24.3 && \
+    python3.11 -m pip install --no-cache-dir boto3==1.28.55 && \
+    python3.11 -m pip install --no-cache-dir fastapi==0.104.1 uvicorn==0.24.0 && \
     python3.11 -m pip cache purge
 
-# Verificar versiones instaladas
-RUN python3.11 -m pip list | grep -E "(gradio|torch|diffusers|huggingface|transformers|accelerate|Pillow|numpy)"
+# Verificar todas las dependencias instaladas
+RUN python3.11 -m pip list | grep -E "(gradio|torch|diffusers|huggingface|transformers|accelerate|Pillow|numpy|boto3|fastapi|uvicorn)"
 
 # Copiar el código de la aplicación
 COPY app.py .

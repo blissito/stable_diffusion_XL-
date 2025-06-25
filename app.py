@@ -8,7 +8,8 @@ import os
 import boto3
 from datetime import datetime
 import uuid
-from fastapi import FastAPI, Request, JSONResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
 # Variables globales
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -25,16 +26,31 @@ if torch.cuda.is_available():
 else:
     gpu_info = "GPU: No disponible (usando CPU)"
 
-# Configurar AWS usando variables de entorno de Fly.io
+# Configurar S3 usando variables de entorno de Fly.io
 s3_client = boto3.client(
     's3',
     aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
     aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY'),
-    region_name=os.getenv('AWS_REGION', 'us-east-1')
+    region_name=os.getenv('AWS_REGION', 'auto'),
+    endpoint_url=os.getenv('AWS_ENDPOINT_URL_S3')
 )
 
 # Configuración del bucket S3
 S3_BUCKET_NAME = os.getenv('S3_BUCKET_NAME')
+
+# Función para generar URLs públicas usando el endpoint de Fly.io
+def get_public_url(bucket_name, key):
+    """Genera una URL pública para un objeto en S3 de Fly.io"""
+    endpoint = os.getenv('AWS_ENDPOINT_URL_S3')
+    if not endpoint:
+        raise ValueError("AWS_ENDPOINT_URL_S3 no está configurado")
+    
+    # Extraer el dominio base del endpoint
+    base_domain = endpoint.replace('https://', '').replace('http://', '')
+    # Remover cualquier prefijo como 'fly.storage'
+    base_domain = base_domain.split('.')[-2] + '.' + base_domain.split('.')[-1]
+    
+    return f"https://{bucket_name}.{base_domain}/{key}"
 
 def load_model_in_background():
     """Carga el modelo Stable Diffusion XL de forma simple"""
@@ -71,13 +87,26 @@ def progress_callback(step, timestep, latents):
     progress_data["status"] = "generating"
 
 def upload_to_s3(image_path):
-    """Sube la imagen a S3 y devuelve la URL pública"""
-    # Generar un nombre único para la imagen
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    image_name = f"sdxl_{timestamp}_{uuid.uuid4().hex[:3]}.png"
-    
+    """Sube un archivo de imagen a S3 y devuelve la URL pública"""
     try:
-        # Subir la imagen a S3
+        # Generar nombre único para el archivo
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        random_part = uuid.uuid4().hex[:6]
+        image_name = f"sdxl_{timestamp}_{random_part}.png"
+        
+        # Configurar políticas públicas
+        bucket_policy = {
+            'Version': '2012-10-17',
+            'Statement': [{
+                'Sid': 'PublicReadGetObject',
+                'Effect': 'Allow',
+                'Principal': '*',
+                'Action': 's3:GetObject',
+                'Resource': f'arn:aws:s3:::{S3_BUCKET_NAME}/*'
+            }]
+        }
+        
+        # Subir a S3 con ACL public-read
         s3_client.upload_file(
             image_path,
             S3_BUCKET_NAME,
@@ -85,8 +114,8 @@ def upload_to_s3(image_path):
             ExtraArgs={'ACL': 'public-read', 'ContentType': 'image/png'}
         )
         
-        # Generar URL pública
-        url = f"https://{S3_BUCKET_NAME}.s3.amazonaws.com/{image_name}"
+        # Obtener URL pública
+        url = get_public_url(S3_BUCKET_NAME, image_name)
         return url
     except Exception as e:
         print(f"Error subiendo a S3: {e}")

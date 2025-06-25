@@ -12,7 +12,9 @@ primary_region = "ord"
   PYTHONUNBUFFERED = "1"
   CUDA_VISIBLE_DEVICES = "0"
   TORCH_CUDA_ARCH_LIST = "8.0;8.6;8.9"
-
+  AWS_REGION = "auto"
+  S3_BUCKET_NAME = "ai-generation-v0"
+  AWS_ENDPOINT_URL_S3 = "https://fly.storage.tigris.dev"
 
 [http_service]
   internal_port = 7860
